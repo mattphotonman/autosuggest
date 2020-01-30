@@ -1,0 +1,11 @@
+# Emacs Autosave #
+##################
+*~
+
+# Python Compiled #
+###################
+*.pyc
+
+# Data #
+########
+data/
