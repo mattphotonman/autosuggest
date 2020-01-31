@@ -42,9 +42,9 @@ class AutoCompleter:
             if len(tokens) < num_tok:
                 break
 
-            ngram = tokens[-num_tok:]
-            stats = self._ngram_stats[num_tok - 2]
-            stats[tuple(ngram[:-1])][ngram[-1]] += 1
+            for idx in range(len(tokens) - num_tok + 1):
+                ngram = tokens[idx:idx + num_tok]
+                self._add_ngram(ngram)
 
     def get_all_suggestions(self, tokens):
         """Gets all suggestions with weights, for a token to follow the tokens 
@@ -88,3 +88,13 @@ class AutoCompleter:
                 from highest to lowest weight.
         """
         return self.get_all_suggestions(tokens).most_common(n_suggestions)
+
+    def _add_ngram(self, ngram):
+        if len(ngram) < 2:
+            raise ValueError(
+                "Can only add n-grams of length 2 or greater, but got {} of "
+                "length {}".format(ngram, len(ngram))
+            )
+
+        stats = self._ngram_stats[len(ngram) - 2]
+        stats[tuple(ngram[:-1])][ngram[-1]] += 1
