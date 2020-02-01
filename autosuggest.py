@@ -20,8 +20,8 @@ class AutoSuggester:
         self.n_tok_max = n_tok_max
         if len(weights) != n_tok_max - 1:
             raise ValueError(
-                "len(weights) != n_tok_max. len(weights) = {}, "
-                "n_tok_max = {}".format(len(weight), n_tok_max)
+                "len(weights) != n_tok_max - 1. len(weights) = {}, "
+                "n_tok_max - 1 = {}".format(len(weights), n_tok_max - 1)
             )
         self.weights = weights
 
