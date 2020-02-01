@@ -3,13 +3,13 @@
 from collections import Counter, defaultdict
 
 
-class AutoCompleter:
+class AutoSuggester:
     """Base class for ingesting lists of tokens, storing n-gram statistics, and
     outputting a suggested next token.
     """
 
     def __init__(self, n_tok_max, weights):
-        """Constructor for AutoCompleter class.
+        """Constructor for AutoSuggester class.
 
         Args:
             n_tok_max (int): the maximum size n-gram for which to store
