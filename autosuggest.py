@@ -2,6 +2,8 @@
 
 from collections import Counter, defaultdict
 
+import numpy as np
+
 
 class AutoSuggester:
     """Base class for ingesting lists of tokens, storing n-gram statistics, and
@@ -18,11 +20,6 @@ class AutoSuggester:
                 lengths, starting from 2 and increasing to `n_tok_max`
         """
         self.n_tok_max = n_tok_max
-        if len(weights) != n_tok_max - 1:
-            raise ValueError(
-                "len(weights) != n_tok_max - 1. len(weights) = {}, "
-                "n_tok_max - 1 = {}".format(len(weights), n_tok_max - 1)
-            )
         self.weights = weights
 
         # `self._ngram_stats` is a list of dictionaries that map n-1 grams to
@@ -30,6 +27,9 @@ class AutoSuggester:
         # n-gram. This list contains dictionaries for n ranging from 2 to
         # self.n_tok_max.
         self._ngram_stats = [defaultdict(Counter) for _ in self.weights]
+
+    def __bool__(self):
+        return any(d for d in self.ngram_stats)
 
     def update(self, tokens):
         """Updates the n-gram statistics with n-grams from the input token
@@ -64,11 +64,13 @@ class AutoSuggester:
                 break
 
             n_minus_one_gram = tokens[-num_tok:]
-            stats = self._ngram_stats[num_tok - 1]
+            stats = self.ngram_stats[num_tok - 1]
             weight = self.weights[num_tok - 1]
-            _suggestions = stats[tuple(n_minus_one_gram)]
-            suggestions += Counter(
-                {k: weight * v for k, v in _suggestions.items()})
+            key = tuple(n_minus_one_gram)
+            if key in stats:
+                _suggestions = stats[key]
+                suggestions += Counter(
+                    {k: weight * v for k, v in _suggestions.items()})
 
         return suggestions
 
@@ -89,6 +91,36 @@ class AutoSuggester:
         """
         return self.get_all_suggestions(tokens).most_common(n_suggestions)
 
+    def merge(self, auto_suggester):
+        """Merge another AutoSuggester instance into this one.
+
+        Args:
+            auto_suggester (AutoSuggester): another AutoSuggester for which the
+               counts will be merged into the current one
+        """
+        for stats_this, stats_other in zip(
+                self.ngram_stats, auto_suggester.ngram_stats):
+            for k, other_counts in stats_other.items():
+                stats_this[k] += other_counts
+
+    @property
+    def weights(self):
+        """Returns the current weights."""
+        return self._weights
+
+    @weights.setter
+    def weights(self, values):
+        if len(values) != self.n_tok_max - 1:
+            raise ValueError(
+                "len(weights) != n_tok_max - 1. len(weights) = {}, "
+                "n_tok_max - 1 = {}".format(len(values), self.n_tok_max - 1)
+            )
+        self._weights = values
+
+    @property
+    def ngram_stats(self):
+        return self._ngram_stats
+
     def _add_ngram(self, ngram):
         if len(ngram) < 2:
             raise ValueError(
@@ -96,5 +128,130 @@ class AutoSuggester:
                 "length {}".format(ngram, len(ngram))
             )
 
-        stats = self._ngram_stats[len(ngram) - 2]
+        stats = self.ngram_stats[len(ngram) - 2]
         stats[tuple(ngram[:-1])][ngram[-1]] += 1
+
+
+class AutoSuggesterFitter:
+    """Class for fitting the weights of an AutoSuggester using
+    cross-validation.
+    """
+
+    def __init__(self, n_tok_max, n_weight_values):
+        """Constructor for AutoSuggesterFitter class.
+
+        Args:
+            n_tok_max (int): the maximum size n-gram for which to store
+                statistics
+            n_weight_values (int): the number of different weight values to
+                grid search over for each weight. The total number of grid
+                points will be `n_weight_values ** (n_tok_max - 1)`.
+        """
+        self.n_tok_max = n_tok_max
+        self.n_weight_values = n_weight_values
+
+    def fit(self, corpus_folds):
+        """Fits an AutoSuggester using cross-validation on the input corpus.
+
+        Args:
+            corpus_folds (list[Corpus]): a list of Corpus instances, where each
+                instance represents one fold
+
+        Returns:
+            an AutoSuggester instance with weights that were fit via
+                cross-validation over `corpus_folds`
+        """
+        num_folds = len(corpus_folds)
+        if num_folds < 2:
+            raise ValueError(
+                "num_folds must be at least 2, but got {}".format(num_folds)
+            )
+
+        auto_suggester_combinations, auto_suggester_all = self._get_combined(
+            corpus_folds)
+
+        grid = self._get_grid(auto_suggester_all, self.n_weight_values)
+
+        scores = []
+        for weights in grid:
+            for auto_suggester in auto_suggester_combinations:
+                auto_suggester.weights = weights
+
+            scores.append(
+                self._score_cv(auto_suggester_combinations, corpus_folds)
+            )
+
+        best_weights = grid[np.argmax(scores)]
+        auto_suggester_all.weights = best_weights
+
+        return auto_suggester_all
+
+    def score(self, auto_suggester, corpus):
+        """Returns a score for the given AutoSuggester's performance on the
+        given corpus.
+
+        Args:
+            auto_suggester (AutoSuggester): the AutoSuggester being scored
+            corpus (Corpus): the Corpus on which to score `auto_suggester`
+
+        Returns:
+            a numerical score for the performance of `auto_suggester` on
+                `corpus`
+        """
+        # @todo implement this
+        pass
+
+    def _get_combined(self, corpus_folds):
+        # `auto_suggester_folds` is a list of AutoSuggester instances, each
+        # trained on one fold in `corpus_folds`
+        auto_suggester_folds = [
+            AutoSuggester(
+                self.n_tok_max, [1 for _ in range(self.n_tok_max - 1)])
+            for _ in corpus_folds
+        ]
+        auto_suggester_all = AutoSuggester(
+            self.n_tok_max, [1 for _ in range(self.n_tok_max - 1)])
+        for auto_suggester, corpus in zip(auto_suggester_folds, corpus_folds):
+            for tokens in corpus:
+                auto_suggester.update(tokens)
+            auto_suggester_all.merge(auto_suggester)
+
+        # `auto_suggester_combinations` is a list of AutoSuggester instances,
+        # each one trained on all folds EXCEPT the one with the same index in
+        # the list `auto_suggester_folds`
+        auto_suggester_combinations = [
+            AutoSuggester(
+                self.n_tok_max, [1 for _ in range(self.n_tok_max - 1)])
+            for _ in corpus_folds
+        ]
+        for idx, auto_suggester in enumerate(auto_suggester_combinations):
+            for idx_fold, auto_suggester_fold in enumerate(
+                    auto_suggester_folds):
+                if idx != idx_fold:
+                    auto_suggester.merge(auto_suggester_fold)
+
+        return auto_suggester_combinations, auto_suggester_all
+
+    def _score_cv(self, auto_suggester_combinations, corpus_folds):
+        scores = []
+        for auto_suggester, corpus in zip(
+                auto_suggester_combinations, corpus_folds):
+            scores.append(self.score(auto_suggester, corpus))
+        return np.mean(scores)
+
+    @staticmethod
+    def _get_grid(auto_suggester, n_weight_values):
+        # @todo implement this
+        pass
+
+
+class Corpus:
+    """A class representing a corpus or document, that can iterate over
+    tokenized sentences.
+    """
+
+    def __iter__(self):
+        """Iterates over lists of tokens, where each list represents a
+        tokenized sentence in the corpus.
+        """
+        raise NotImplementedError("subclasses must implement __iter__()")
