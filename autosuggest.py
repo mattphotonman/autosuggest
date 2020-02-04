@@ -49,7 +49,7 @@ class AutoSuggester:
                 self._add_ngram(ngram)
 
     def get_all_suggestions(self, tokens):
-        """Gets all suggestions with weights, for a token to follow the tokens 
+        """Gets all suggestions with weights, for a token to follow the tokens
         in the input list.
 
         Args:
@@ -85,11 +85,11 @@ class AutoSuggester:
             n_suggestions (int): number of suggestions to return
 
         Returns:
-            suggestions (list): a list of `n_suggestions` (token, weight) pairs,
-                where `token` is suggested to follow `tokens`, and `weight` is
-                the relative likelihood for the given suggestion. The list
-                represents the highest likelihood suggestions and is ordered
-                from highest to lowest weight.
+            suggestions (list): a list of `n_suggestions` (token, weight)
+                pairs, where `token` is suggested to follow `tokens`, and
+                `weight` is the relative likelihood for the given suggestion.
+                The list represents the highest likelihood suggestions and is
+                ordered from highest to lowest weight.
         """
         return self.get_all_suggestions(tokens).most_common(n_suggestions)
 
@@ -121,6 +121,7 @@ class AutoSuggester:
 
     @property
     def ngram_stats(self):
+        """Returns the underlying ngram stats list"""
         return self._ngram_stats
 
     def _add_ngram(self, ngram):
@@ -229,6 +230,45 @@ class AutoSuggesterFitter:
 
         return sum_score / num_tokens
 
+    def baseline_score(self, auto_suggester, corpus):
+        """Returns a baseline score for the corpus that would be obtained by
+        always predicting the most popular tokens.
+
+        Args:
+            auto_suggester (AutoSuggester): an AutoSuggester from which to get
+                the most popular tokens
+            corpus (Corpus): the Corpus on which to calculate the baseline
+                score
+
+        Returns:
+            a numerical score for the performance of an auto-suggester that
+                always predicts the most popular tokens on `corpus`
+        """
+        digram_stats = auto_suggester.ngram_stats[0]
+        token_counts = Counter()
+        for counts in digram_stats.values():
+            token_counts.update(counts)
+
+        n_suggestions = self.score_weights[-1][0]
+        suggestions = [
+            token for token, _ in token_counts.most_common(n_suggestions)]
+
+        token_scores = {}
+        last_rank = 0
+        for rank, weight in self.score_weights:
+            for suggestion in suggestions[last_rank:rank]:
+                token_scores[suggestion] = weight
+                last_rank = rank
+
+        sum_score = 0
+        num_tokens = 0
+        for tokens in corpus:
+            for token in tokens[1:]:
+                sum_score += token_scores.get(token, 0)
+                num_tokens += 1
+
+        return sum_score / num_tokens
+
     def _get_combined(self, corpus_folds):
         # `auto_suggester_folds` is a list of AutoSuggester instances, each
         # trained on one fold in `corpus_folds`
@@ -281,8 +321,8 @@ class AutoSuggesterFitter:
 
         rank = ranks[0]
         pos_rank = bisect_left(self.score_weights, (rank, -1))
-        if pos_rank == len(self.score_weights):
-            return 0
+        assert pos_rank != len(self.score_weights), (
+            "rank should be contained in self.score_weights")
         return self.score_weights[pos_rank][1]
 
     def _get_grid(self, auto_suggester):
