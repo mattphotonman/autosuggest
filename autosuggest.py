@@ -2,6 +2,7 @@
 
 from bisect import bisect_left
 from collections import Counter, defaultdict
+from itertools import product
 
 import numpy as np
 
@@ -70,7 +71,7 @@ class AutoSuggester:
             key = tuple(n_minus_one_gram)
             if key in stats:
                 _suggestions = stats[key]
-                suggestions += Counter(
+                suggestions.update(
                     {k: weight * v for k, v in _suggestions.items()})
 
         return suggestions
@@ -102,7 +103,7 @@ class AutoSuggester:
         for stats_this, stats_other in zip(
                 self.ngram_stats, auto_suggester.ngram_stats):
             for k, other_counts in stats_other.items():
-                stats_this[k] += other_counts
+                stats_this[k].update(other_counts)
 
     @property
     def weights(self):
@@ -181,7 +182,7 @@ class AutoSuggesterFitter:
         auto_suggester_combinations, auto_suggester_all = self._get_combined(
             corpus_folds)
 
-        grid = self._get_grid(auto_suggester_all, self.n_weight_values)
+        grid = self._get_grid(auto_suggester_all)
 
         scores = []
         for weights in grid:
@@ -280,10 +281,37 @@ class AutoSuggesterFitter:
             return 0
         return self.score_weights[pos_rank][1]
 
-    @staticmethod
-    def _get_grid(auto_suggester, n_weight_values):
-        # @todo implement this
-        pass
+    def _get_grid(self, auto_suggester):
+        # bi-grams always have a weight of 1 so that equivalent weights
+        # with different normalizations aren't included
+        grid_values = [[1]]
+        for n_tok in range(3, auto_suggester.n_tok_max + 1):
+            grid_values.append(
+                self._get_weight_percentiles(auto_suggester, n_tok))
+
+        return [list(w) for w in product(*grid_values)]
+
+    def _get_weight_percentiles(self, auto_suggester, n_tokens):
+        stats = auto_suggester.ngram_stats[n_tokens - 2]
+        bigram_stats = auto_suggester.ngram_stats[0]
+
+        count_ratios = []
+        for head_tokens, counts in stats.items():
+            first_bigram_token = head_tokens[-1]
+            bigram_counts = bigram_stats[(first_bigram_token,)]
+            min_bigram_count = min(bigram_counts.values())
+            max_bigram_count = max(bigram_counts.values())
+
+            for count in counts.values():
+                count_ratios.extend(
+                    [min_bigram_count / count, max_bigram_count / count])
+
+        percentiles = np.percentile(
+            count_ratios,
+            np.arange(0, 100 + 1E-5, 100 / (self.n_weight_values - 1))
+        )
+        # discard weight values < 1
+        return [1] + [w for w in percentiles if w > 1]
 
 
 class Corpus:
