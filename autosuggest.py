@@ -179,19 +179,23 @@ class AutoSuggesterFitter:
                 "num_folds must be at least 2, but got {}".format(num_folds)
             )
 
+        print("loading folds")
         auto_suggester_combinations, auto_suggester_all = self._get_combined(
             corpus_folds)
 
+        print("getting grid")
         grid = self._get_grid(auto_suggester_all)
 
+        print("Fitting {} grid points".format(len(grid)))
         scores = []
         for weights in grid:
             for auto_suggester in auto_suggester_combinations:
                 auto_suggester.weights = weights
+            print("weights = {}".format(weights))
 
-            scores.append(
-                self._score_cv(auto_suggester_combinations, corpus_folds)
-            )
+            score = self._score_cv(auto_suggester_combinations, corpus_folds)
+            scores.append(score)
+            print("score = {}".format(score))
 
         best_weights = grid[np.argmax(scores)]
         auto_suggester_all.weights = best_weights
@@ -286,6 +290,7 @@ class AutoSuggesterFitter:
         # with different normalizations aren't included
         grid_values = [[1]]
         for n_tok in range(3, auto_suggester.n_tok_max + 1):
+            print("getting grid values for n-grams of size {}".format(n_tok))
             grid_values.append(
                 self._get_weight_percentiles(auto_suggester, n_tok))
 
