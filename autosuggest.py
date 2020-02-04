@@ -1,5 +1,6 @@
 """Basic autosuggest engine for the next word in a sentence."""
 
+from bisect import bisect_left
 from collections import Counter, defaultdict
 
 import numpy as np
@@ -137,7 +138,7 @@ class AutoSuggesterFitter:
     cross-validation.
     """
 
-    def __init__(self, n_tok_max, n_weight_values):
+    def __init__(self, n_tok_max, n_weight_values, score_weights=[(5, 1)]):
         """Constructor for AutoSuggesterFitter class.
 
         Args:
@@ -146,9 +147,19 @@ class AutoSuggesterFitter:
             n_weight_values (int): the number of different weight values to
                 grid search over for each weight. The total number of grid
                 points will be `n_weight_values ** (n_tok_max - 1)`.
+            score_weights (list[tuple]): a list of tuples (rank, weight), which
+                indicate that if the actual next token is in the top `rank`
+                suggestions or lower, then a score proportional to `weight`
+                will be given for this token
         """
         self.n_tok_max = n_tok_max
         self.n_weight_values = n_weight_values
+
+        max_weight = max(weight for _, weight in score_weights)
+        # normalize so that the highest score for any given token is 1
+        score_weights = [
+            (rank, weight / max_weight) for rank, weight in score_weights]
+        self.score_weights = sorted(score_weights, key=lambda t: t[0])
 
     def fit(self, corpus_folds):
         """Fits an AutoSuggester using cross-validation on the input corpus.
@@ -190,6 +201,11 @@ class AutoSuggesterFitter:
         """Returns a score for the given AutoSuggester's performance on the
         given corpus.
 
+        The score is an average of the per-token score over the corpus. The
+        per-token score depends on how the actual token compares to the
+        suggestion list for that token. In particular, the score is assigned
+        using `self.score_weights`.
+
         Args:
             auto_suggester (AutoSuggester): the AutoSuggester being scored
             corpus (Corpus): the Corpus on which to score `auto_suggester`
@@ -198,8 +214,15 @@ class AutoSuggesterFitter:
             a numerical score for the performance of `auto_suggester` on
                 `corpus`
         """
-        # @todo implement this
-        pass
+        sum_score = 0
+        num_tokens = 0
+        for tokens in corpus:
+            for idx_end in range(2, len(tokens) + 1):
+                sub_tokens = tokens[:idx_end]
+                sum_score += self._score_last_token(auto_suggester, sub_tokens)
+                num_tokens += 1
+
+        return sum_score / num_tokens
 
     def _get_combined(self, corpus_folds):
         # `auto_suggester_folds` is a list of AutoSuggester instances, each
@@ -238,6 +261,24 @@ class AutoSuggesterFitter:
                 auto_suggester_combinations, corpus_folds):
             scores.append(self.score(auto_suggester, corpus))
         return np.mean(scores)
+
+    def _score_last_token(self, auto_suggester, tokens):
+        n_suggestions = self.score_weights[-1][0]
+        suggestions = auto_suggester.suggest(tokens[:-1], n_suggestions)
+        last_token = tokens[-1]
+        ranks = [
+            idx + 1 for idx, (token, _) in enumerate(suggestions)
+            if token == last_token
+        ]
+
+        if not ranks:
+            return 0
+
+        rank = ranks[0]
+        pos_rank = bisect_left(self.score_weights, (rank, -1))
+        if pos_rank == len(self.score_weights):
+            return 0
+        return self.score_weights[pos_rank][1]
 
     @staticmethod
     def _get_grid(auto_suggester, n_weight_values):
